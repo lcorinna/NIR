@@ -1,0 +1,2 @@
+img_width,img_height,batch_size,epochs,optimizer,learning_rate,loss_function,num_classes
+640,640,32,50,Adam,0.001,categorical_crossentropy,3
