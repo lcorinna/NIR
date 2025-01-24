@@ -1,3 +1,4 @@
 data/
-готовые нейронки/
+готовые нейронки/AlexNet/alexnet_aircraft_defect_classifier.keras
+готовые нейронки/VGG/vgg16_aircraft_defect_classifier.keras
 aircraft_defect_classifier.keras
