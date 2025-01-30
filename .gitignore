@@ -1,4 +1,11 @@
 data/
+datasets/
+Aircraft Defect Detection/
+Faster_R-CNN/dataset
+Faster_R-CNN/dataset1
+Faster_R-CNN/dataset2
+Faster_R-CNN/faster_rcnn.pth
 готовые нейронки/AlexNet/alexnet_aircraft_defect_classifier.keras
 готовые нейронки/VGG/vgg16_aircraft_defect_classifier.keras
 aircraft_defect_classifier.keras
+yolo11n.pt

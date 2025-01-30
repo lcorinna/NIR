@@ -98,13 +98,6 @@ history = model.fit(
     callbacks=callbacks
 )
 
-# Экспорт модели для использования в детекции YOLO
-model_feature_extractor = tf.keras.Model(
-    inputs=model.input,  # Входы модели
-    outputs=model.layers[-3].output  # Выходы перед финальным полносвязным слоем
-)
-model_feature_extractor.save('feature_extractor.keras')  # Сохранение модели-фиче-экстрактора
-
 # Оценка модели на тестовых данных
 test_loss, test_accuracy = model.evaluate(test_generator, steps=test_generator.samples // batch_size)
 print(f'Test accuracy: {test_accuracy * 100:.2f}%')
