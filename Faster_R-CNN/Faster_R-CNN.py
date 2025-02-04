@@ -9,9 +9,11 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision.models.detection import fasterrcnn_resnet50_fpn, FasterRCNN_ResNet50_FPN_Weights
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.transforms import functional as F
-from sklearn.metrics import precision_recall_fscore_support, accuracy_score, classification_report
+from sklearn.metrics import classification_report
+from collections import defaultdict
 from datetime import datetime
 import pytz
+from PIL import Image
 
 # =============================
 # 1. Параметры модели и обучения
@@ -21,6 +23,7 @@ BATCH_SIZE = 4
 EPOCHS = 50
 LEARNING_RATE = 0.0005
 DATASET_PATH = r"E:/MAI/NIR/Faster_R-CNN/dataset/"
+MODEL_PATH = "faster_rcnn.pth"
 
 # =============================
 # 2. Проверка пути к dataset
@@ -42,34 +45,28 @@ class CustomDataset(Dataset):
         with open(ann_file, "r") as f:
             self.coco_data = json.load(f)
 
-        self.image_info = {img["id"]: img["file_name"] for img in self.coco_data["images"]}
-        self.annotations = {ann["image_id"]: ann for ann in self.coco_data["annotations"]}
         self.class_names = {cat["id"]: cat["name"] for cat in self.coco_data["categories"]}
-        
-        # Добавляем "фон" (Background) как класс 0
-        self.class_names[0] = "background"
+        self.image_info = {img["id"]: img["file_name"] for img in self.coco_data["images"]}
+        self.annotations = defaultdict(list)
+
+        for ann in self.coco_data["annotations"]:
+            self.annotations[ann["image_id"]].append(ann)
 
     def __getitem__(self, idx):
         img_name = self.image_info[idx]
         img_path = os.path.join(self.root, img_name)
 
-        img = cv2.imread(img_path)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = F.to_tensor(img)
+        img = F.to_tensor(Image.open(img_path).convert("RGB"))
+        anns = self.annotations[idx]
 
-        ann = self.annotations.get(idx, {"bbox": [], "category_id": []})
-        boxes = torch.tensor([ann["bbox"]], dtype=torch.float32) if ann["bbox"] else torch.zeros((0, 4))
-        labels = torch.tensor([ann["category_id"]], dtype=torch.int64) if ann["category_id"] else torch.zeros((0,), dtype=torch.int64)
+        boxes = torch.tensor([ann["bbox"] for ann in anns], dtype=torch.float32) if anns else torch.zeros((0, 4))
+        labels = torch.tensor([ann["category_id"] for ann in anns], dtype=torch.int64) if anns else torch.zeros((0,), dtype=torch.int64)
 
-        # Преобразуем COCO bbox [x, y, w, h] → [x_min, y_min, x_max, y_max]
         if len(boxes) > 0:
-            boxes[:, 2] += boxes[:, 0]
-            boxes[:, 3] += boxes[:, 1]
-            boxes[:, 2] = torch.clamp(boxes[:, 2], min=boxes[:, 0] + 1)
-            boxes[:, 3] = torch.clamp(boxes[:, 3], min=boxes[:, 1] + 1)
+            boxes[:, 2] += boxes[:, 0]  # x_max = x_min + width
+            boxes[:, 3] += boxes[:, 1]  # y_max = y_min + height
 
-        target = {"boxes": boxes, "labels": labels}
-        return img, target
+        return img, {"boxes": boxes, "labels": labels}
 
     def __len__(self):
         return len(self.image_info)
@@ -94,7 +91,7 @@ if __name__ == '__main__':
         model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
         return model
 
-    num_classes = len(train_dataset.class_names)
+    num_classes = len(train_dataset.class_names) + 1
     model = get_faster_rcnn_model(num_classes).to(DEVICE)
 
     # =============================
@@ -130,14 +127,22 @@ if __name__ == '__main__':
         lr_scheduler.step()
         print(f"✅ Эпоха {epoch+1} завершена. | Время (Москва): {moscow_time} | Loss: {total_loss:.4f}")
 
-    torch.save(model.state_dict(), "faster_rcnn.pth")
+    torch.save(model.state_dict(), MODEL_PATH)
     print("✅ Модель сохранена!")
 
     # =============================
     # 7. Оценка модели
     # =============================
-    def evaluate_model(model, test_loader, class_names):
+    def load_faster_rcnn_model(num_classes, model_path):
+        model = fasterrcnn_resnet50_fpn(weights=None)
+        in_features = model.roi_heads.box_predictor.cls_score.in_features
+        model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+        model.load_state_dict(torch.load(model_path, map_location=DEVICE))
+        model.to(DEVICE)
         model.eval()
+        return model
+
+    def evaluate_model(model, test_loader, class_names):
         all_preds = []
         all_targets = []
 
@@ -150,21 +155,22 @@ if __name__ == '__main__':
                     pred_labels = pred["labels"].cpu().numpy().tolist()
                     target_labels = target["labels"].cpu().numpy().tolist()
 
+                    max_len = max(len(pred_labels), len(target_labels))
+                    pred_labels += [0] * (max_len - len(pred_labels))
+                    target_labels += [0] * (max_len - len(target_labels))
+
                     all_preds.extend(pred_labels)
                     all_targets.extend(target_labels)
 
         if len(all_preds) == 0 or len(all_targets) == 0:
-            print("⚠️ Нет предсказаний или аннотаций!")
+            print("⚠️ Нет предсказаний или аннотаций! Проверьте данные.")
             return
 
         print("\n📊 **Метрики по каждому классу:**")
-        precision, recall, f1, _ = precision_recall_fscore_support(all_targets, all_preds, zero_division=0)
-        accuracy = accuracy_score(all_targets, all_preds)
+        print(classification_report(
+            all_targets, all_preds, labels=sorted(test_dataset.class_names.keys()), target_names=list(test_dataset.class_names.values()), zero_division=1
+        ))
 
-        for i, class_name in enumerate(sorted(class_names.values())):
-            print(f"{class_name}: Precision={precision[i]:.4f}, Recall={recall[i]:.4f}, F1-score={f1[i]:.4f}")
-
-        print(f"\n📊 **Общая точность (Accuracy): {accuracy:.4f}**")
-
-    # 🔥 Оценка модели
-    evaluate_model(model, test_loader, train_dataset.class_names)
+    print("🔍 Запуск оценки модели...")
+    model = load_faster_rcnn_model(num_classes, MODEL_PATH)
+    evaluate_model(model, test_loader, test_dataset.class_names)
