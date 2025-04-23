@@ -12,7 +12,7 @@ from torchvision.transforms import functional as F
 # =============================
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 MODEL_PATH = "faster_rcnn.pth"  # Путь к сохраненной модели
-TEST_IMAGE_PATH = "E:/MAI/NIR/Faster-R-CNN/dataset/test/example.jpg"  # Замените на свой путь
+TEST_IMAGE_PATH = 'E:/MAI/NIR/изображения для проверки/image4.jpg'  # Укажи путь к файлу
 
 # =============================
 # 2. Функция загрузки модели

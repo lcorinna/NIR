@@ -2,9 +2,6 @@ import torch
 import torchvision
 import os
 import json
-import cv2
-import numpy as np
-import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, Dataset
 from torchvision.models.detection import fasterrcnn_resnet50_fpn, FasterRCNN_ResNet50_FPN_Weights
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
@@ -16,7 +13,7 @@ import pytz
 from PIL import Image
 
 # =============================
-# 1. Параметры модели и обучения
+# 1. Параметры
 # =============================
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = 4
@@ -26,13 +23,7 @@ DATASET_PATH = r"E:/MAI/NIR/Faster_R-CNN/dataset/"
 MODEL_PATH = "faster_rcnn.pth"
 
 # =============================
-# 2. Проверка пути к dataset
-# =============================
-if not os.path.exists(DATASET_PATH):
-    raise FileNotFoundError(f"❌ Ошибка: Папка {DATASET_PATH} не найдена!")
-
-# =============================
-# 3. Кастомный датасет COCO
+# 2. Кастомный датасет COCO
 # =============================
 class CustomDataset(Dataset):
     def __init__(self, root, split="train"):
@@ -72,7 +63,17 @@ class CustomDataset(Dataset):
         return len(self.image_info)
 
 # =============================
-# 4. Основной блок (Windows Fix)
+# 3. Модель
+# =============================
+def get_faster_rcnn_model(num_classes):
+    weights = FasterRCNN_ResNet50_FPN_Weights.DEFAULT
+    model = fasterrcnn_resnet50_fpn(weights=weights)
+    in_features = model.roi_heads.box_predictor.cls_score.in_features
+    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+    return model
+
+# =============================
+# 4. Обучение и оценка
 # =============================
 if __name__ == '__main__':
     train_dataset = CustomDataset(DATASET_PATH, split="train")
@@ -81,22 +82,9 @@ if __name__ == '__main__':
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0, collate_fn=lambda batch: tuple(zip(*batch)))
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, collate_fn=lambda batch: tuple(zip(*batch)))
 
-    # =============================
-    # 5. Определяем модель Faster R-CNN
-    # =============================
-    def get_faster_rcnn_model(num_classes):
-        weights = FasterRCNN_ResNet50_FPN_Weights.DEFAULT
-        model = fasterrcnn_resnet50_fpn(weights=weights)
-        in_features = model.roi_heads.box_predictor.cls_score.in_features
-        model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
-        return model
-
     num_classes = len(train_dataset.class_names) + 1
     model = get_faster_rcnn_model(num_classes).to(DEVICE)
 
-    # =============================
-    # 6. Обучение модели
-    # =============================
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 
@@ -106,10 +94,10 @@ if __name__ == '__main__':
         model.train()
         total_loss = 0
         moscow_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime("%H:%M:%S")
-        print(f"🔥 Начало эпохи {epoch+1}/{EPOCHS} | Время (Москва): {moscow_time}")
+        print(f"🔥 Эпоха {epoch+1}/{EPOCHS} | Время (Москва): {moscow_time}")
 
         for imgs, targets in train_loader:
-            imgs = list(img.to(DEVICE) for img in imgs)
+            imgs = [img.to(DEVICE) for img in imgs]
             targets = [{k: v.to(DEVICE) for k, v in t.items()} for t in targets]
 
             optimizer.zero_grad()
@@ -117,7 +105,7 @@ if __name__ == '__main__':
             loss = sum(loss for loss in loss_dict.values())
 
             if torch.isnan(loss):
-                print(f"⚠️ Loss NaN в эпохе {epoch+1}")
+                print(f"⚠️ NaN loss в эпохе {epoch+1}")
                 break
 
             loss.backward()
@@ -125,30 +113,23 @@ if __name__ == '__main__':
             total_loss += loss.item()
 
         lr_scheduler.step()
-        print(f"✅ Эпоха {epoch+1} завершена. | Время (Москва): {moscow_time} | Loss: {total_loss:.4f}")
+        print(f"✅ Эпоха {epoch+1} завершена | Loss: {total_loss:.4f}")
 
-    torch.save(model.state_dict(), MODEL_PATH)
-    print("✅ Модель сохранена!")
+        if (epoch + 1) % 5 == 0 or (epoch + 1) == EPOCHS:
+            torch.save(model.state_dict(), MODEL_PATH)
+            print(f"💾 Модель сохранена после эпохи {epoch+1}")
 
     # =============================
-    # 7. Оценка модели
+    # 5. Оценка модели
     # =============================
-    def load_faster_rcnn_model(num_classes, model_path):
-        model = fasterrcnn_resnet50_fpn(weights=None)
-        in_features = model.roi_heads.box_predictor.cls_score.in_features
-        model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
-        model.load_state_dict(torch.load(model_path, map_location=DEVICE))
-        model.to(DEVICE)
-        model.eval()
-        return model
-
     def evaluate_model(model, test_loader, class_names):
+        model.eval()
         all_preds = []
         all_targets = []
 
         with torch.no_grad():
             for imgs, targets in test_loader:
-                imgs = list(img.to(DEVICE) for img in imgs)
+                imgs = [img.to(DEVICE) for img in imgs]
                 predictions = model(imgs)
 
                 for pred, target in zip(predictions, targets):
@@ -162,15 +143,21 @@ if __name__ == '__main__':
                     all_preds.extend(pred_labels)
                     all_targets.extend(target_labels)
 
-        if len(all_preds) == 0 or len(all_targets) == 0:
-            print("⚠️ Нет предсказаний или аннотаций! Проверьте данные.")
+        if not all_preds or not all_targets:
+            print("⚠️ Нет предсказаний или аннотаций!")
             return
 
         print("\n📊 **Метрики по каждому классу:**")
         print(classification_report(
-            all_targets, all_preds, labels=sorted(test_dataset.class_names.keys()), target_names=list(test_dataset.class_names.values()), zero_division=1
+            all_targets,
+            all_preds,
+            labels=sorted(test_dataset.class_names.keys()),
+            target_names=list(test_dataset.class_names.values()),
+            zero_division=1
         ))
 
-    print("🔍 Запуск оценки модели...")
-    model = load_faster_rcnn_model(num_classes, MODEL_PATH)
+    print("🔍 Загружаем модель и запускаем оценку...")
+    model = get_faster_rcnn_model(num_classes)
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+    model.to(DEVICE)
     evaluate_model(model, test_loader, test_dataset.class_names)
