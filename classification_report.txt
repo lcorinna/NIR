@@ -1,9 +1,0 @@
-                 precision    recall  f1-score   support
-
-           Dent       0.33      0.31      0.32       300
-Fastener Damage       0.25      0.34      0.29       300
-        Rupture       0.33      0.23      0.27       300
-
-       accuracy                           0.30       900
-      macro avg       0.30      0.30      0.29       900
-   weighted avg       0.30      0.30      0.29       900
